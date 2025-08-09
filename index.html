@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Vent Shaft — EXT4 (bolts on flange, shaft offset)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { --bg:#dfe7ee; --panel:#ffffffee; --btn:#fff; --btn-b:#8e8e8e; }
+  html, body {margin:0; height:100%; overflow:hidden; background:var(--bg); font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;}
+  #ui { position:fixed; top:12px; left:12px; display:flex; flex-wrap:wrap; gap:.6rem .8rem; z-index:10; background:var(--panel); padding:.6rem .7rem; border:1px solid #c8ced6; border-radius:10px; align-items:center; }
+  button { padding:.45rem .7rem; border:1px solid var(--btn-b); background:var(--btn); border-radius:6px; cursor:pointer; }
+  button:hover { background:#f4f4f4; }
+  #hint { position:fixed; right:12px; top:12px; background:var(--panel); padding:.5rem .75rem; border-radius:6px; border:1px solid #c8ced6; font-size:14px; }
+  label { font-size:12px; opacity:.85; margin-right:.25rem; white-space:nowrap; }
+  input[type=range] { width:120px; vertical-align:middle; }
+  .sep { width:1px; height:22px; background:#c8ced6; margin:0 .2rem; }
+  canvas { display:block; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.157.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.157.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="ui">
+  <button id="resetBtn">Сброс вида</button>
+  <button id="exportBtn">Экспорт glTF</button>
+  <span class="sep"></span>
+  <label for="angle">Угол жалюзи</label><input id="angle" type="range" min="10" max="65" step="1" value="28">
+  <label for="pitch">Шаг (мм)</label><input id="pitch" type="range" min="40" max="110" step="1" value="55">
+  <label for="wall">Толщина стен (мм)</label><input id="wall" type="range" min="80" max="220" step="2" value="120">
+  <span class="sep"></span>
+  <label for="apw">Ширина проёма (мм)</label><input id="apw" type="range" min="650" max="1100" step="5" value="820">
+  <label for="aph">Высота проёма (мм)</label><input id="aph" type="range" min="800" max="1200" step="5" value="950">
+</div>
+<div id="hint">ЛКМ — вращение • ПКМ — сдвиг • Колесо — зум • X — оси</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+/* ---------- tiny procedural textures ---------- */
+function perlinLike(size=512, scale=18, octaves=4){
+  const w=size, h=size, data=new Float32Array(w*h);
+  const rnd=(sx,sy)=>{ const x=Math.sin(sx*127.1+sy*311.7)*43758.5453; return x-Math.floor(x); };
+  function noise2D(x,y){ const xi=Math.floor(x), yi=Math.floor(y); const xf=x-xi, yf=y-yi;
+    const n00=rnd(xi,yi), n10=rnd(xi+1,yi), n01=rnd(xi,yi+1), n11=rnd(xi+1,yi+1);
+    const u=xf*xf*(3-2*xf), v=yf*yf*(3-2*yf); const x1=n00*(1-u)+n10*u, x2=n01*(1-u)+n11*u; return x1*(1-v)+x2*v; }
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    let amp=1, freq=1, total=0, norm=0;
+    for(let o=0;o<octaves;o++){ total+=noise2D(x/scale*freq, y/scale*freq)*amp; norm+=amp; amp*=0.5; freq*=2; }
+    data[y*w+x]=total/norm;
+  } return data;
+}
+function makeConcreteURL(size=1024){
+  const c=document.createElement('canvas'); c.width=c.height=size; const ctx=c.getContext('2d',{willReadFrequently:true});
+  const n=perlinLike(size,18,5), img=ctx.createImageData(size,size);
+  for(let i=0;i<img.data.length;i+=4){
+    const v=n[i/4], base=0.72, tint=[178,184,188]; const k=Math.max(0,Math.min(255,Math.round((base+(v-0.5)*0.16)*255)));
+    img.data[i]=Math.round(tint[0]*k/255); img.data[i+1]=Math.round(tint[1]*k/255); img.data[i+2]=Math.round(tint[2]*k/255); img.data[i+3]=255;
+  }
+  ctx.putImageData(img,0,0); ctx.globalAlpha=0.11;
+  for(let i=0;i<22;i++){ ctx.fillStyle='#6b737a'; const x=Math.random()*size, w=2+Math.random()*4, h=size*(0.35+Math.random()*0.45); ctx.fillRect(x,0,w,h); }
+  ctx.globalAlpha=1; return c.toDataURL('image/png');
+}
+function makeMetalURL(size=1024){
+  const c=document.createElement('canvas'); c.width=c.height=size; const ctx=c.getContext('2d',{willReadFrequently:true});
+  const n=perlinLike(size,22,4), img=ctx.createImageData(size,size);
+  for(let i=0;i<img.data.length;i+=4){
+    const v=n[i/4], base=0.83; const k=Math.max(0,Math.min(255,Math.round((base+(v-0.5)*0.06)*255)));
+    img.data[i]=img.data[i+1]=img.data[i+2]=k; img.data[i+3]=255;
+  } ctx.putImageData(img,0,0); return c.toDataURL('image/png');
+}
+const concURL = makeConcreteURL(1024);
+const metalURL= makeMetalURL(1024);
+
+/* ---------- scene ---------- */
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xd7e1e9);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 400);
+camera.position.set(4.4, 2.6, 6.2); scene.add(camera);
+const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.target.set(0,1.0,0);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x586070, 0.75));
+const dir = new THREE.DirectionalLight(0xffffff, 1.15); dir.position.set(6,9,5); dir.castShadow=true; dir.shadow.mapSize.set(2048,2048); scene.add(dir);
+const grid = new THREE.GridHelper(60, 60, 0x666666, 0xbbbbbb); grid.position.y=0.001; scene.add(grid);
+const axes = new THREE.AxesHelper(1.5); axes.visible=false; scene.add(axes);
+document.addEventListener('keydown', e=>{ if(['x','X','х','Х'].includes(e.key)) axes.visible=!axes.visible; });
+
+/* ---------- materials ---------- */
+const loader = new THREE.TextureLoader();
+function load(url, sRGB=true, repX=1.0, repY=1.0){
+  const t=loader.load(url); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(repX,repY); t.anisotropy=8; t.colorSpace=sRGB?THREE.SRGBColorSpace:THREE.NoColorSpace; return t;
+}
+const concBase = load(concURL, true, 1.6, 1.0);
+const metalBase= load(metalURL, true, 1.0, 1.0);
+const mConcrete = new THREE.MeshStandardMaterial({ map: concBase, roughness:0.86, metalness:0.0, side:THREE.DoubleSide });
+const mMetal    = new THREE.MeshStandardMaterial({ map: metalBase, roughness:0.40, metalness:0.0, side:THREE.DoubleSide });
+const mBolt     = new THREE.MeshStandardMaterial({ color:0x9aa3ac, roughness:0.35, metalness:0.9 });
+
+/* ---------- params (metres) ---------- */
+const P = {
+  W: 2.20, D: 2.20,
+  H_PLINTH: 0.25, H_BODY: 1.30, ROOF_H: 0.30,
+  WALL_T: 0.12,
+
+  AP_W: 0.82, AP_H: 0.95,
+  BORDER: 0.06,
+
+  FLANGE_W: 0.06, FLANGE_T: 0.020,
+  BOX_DEPTH: 0.18, BOX_WALL: 0.020,
+  VPOST_W: 0.030, VPOST_T: 0.020,
+  HRAIL_H: 0.030, HRAIL_T: 0.018,
+  SLAT_T: 0.016, SLAT_PITCH: 0.055, SLAT_ANG: 28 * Math.PI/180,
+  DRIP_W: 0.11, DRIP_T: 0.010,
+
+  BOLT_D: 0.010, BOLT_HEAD_D: 0.020
+};
+
+/* ---------- helpers ---------- */
+function makePanelWithHole(width, height, holeW, holeH, thickness){
+  const s = new THREE.Shape();
+  s.moveTo(-width/2, 0); s.lineTo(width/2, 0); s.lineTo(width/2, height); s.lineTo(-width/2, height); s.lineTo(-width/2, 0);
+  const hx0=-holeW/2, hx1=holeW/2, hy0=(height-holeH)/2, hy1=hy0+holeH;
+  const h = new THREE.Path(); h.moveTo(hx0,hy0); h.lineTo(hx1,hy0); h.lineTo(hx1,hy1); h.lineTo(hx0,hy1); h.lineTo(hx0,hy0);
+  s.holes.push(h);
+  const g = new THREE.ExtrudeGeometry(s, { depth: thickness, bevelEnabled:false });
+  return g;
+}
+function makeSolidHipRoof(W,D,yTop,height,mat){
+  const apexY=yTop+height;
+  const g=new THREE.BufferGeometry();
+  const v=[
+    -W/2, yTop, -D/2,   W/2, yTop, -D/2,   W/2, yTop,  D/2,
+    -W/2, yTop, -D/2,   W/2, yTop,  D/2,  -W/2, yTop,  D/2,
+    -W/2, yTop, -D/2,    W/2, yTop, -D/2,   0, apexY, 0,
+     W/2, yTop, -D/2,    W/2, yTop,  D/2,   0, apexY, 0,
+     W/2, yTop,  D/2,   -W/2, yTop,  D/2,   0, apexY, 0,
+    -W/2, yTop,  D/2,   -W/2, yTop, -D/2,   0, apexY, 0
+  ];
+  g.setAttribute('position', new THREE.Float32BufferAttribute(v,3)); g.computeVertexNormals();
+  return new THREE.Mesh(g, mat);
+}
+function buildBolt(){
+  const grp=new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(P.BOLT_D/2,P.BOLT_D/2, P.WALL_T+0.02, 16), mBolt);
+  shaft.rotation.x = Math.PI/2;
+  // смещаем стержень так, чтобы он начинался сразу за фланцем и уходил в стену
+  shaft.position.z = P.FLANGE_T/2 + P.WALL_T/2;
+  const head  = new THREE.Mesh(new THREE.CylinderGeometry(P.BOLT_HEAD_D/2,P.BOLT_HEAD_D/2, P.FLANGE_T*0.7, 6), mBolt);
+  head.rotation.x = Math.PI/2; head.position.z = P.FLANGE_T/2 + 0.001;
+  const nut   = new THREE.Mesh(new THREE.CylinderGeometry((P.BOLT_HEAD_D*0.8)/2,(P.BOLT_HEAD_D*0.8)/2, P.FLANGE_T*0.6, 6), mBolt);
+  nut.rotation.x = Math.PI/2;  nut.position.z = P.FLANGE_T/2 + P.WALL_T + 0.01;
+  grp.add(shaft, head, nut);
+  return grp;
+}
+function buildGrille(clearW, clearH){
+  const g=new THREE.Group();
+  const fw=P.FLANGE_W, ft=P.FLANGE_T, hw=clearW/2, hh=clearH/2;
+
+  const flange = new THREE.Group();
+  const top  = new THREE.Mesh(new THREE.BoxGeometry(clearW-2*fw, fw, ft), mMetal);
+  const bot  = new THREE.Mesh(new THREE.BoxGeometry(clearW-2*fw, fw, ft), mMetal);
+  const left = new THREE.Mesh(new THREE.BoxGeometry(fw, clearH-2*fw, ft), mMetal);
+  const right= new THREE.Mesh(new THREE.BoxGeometry(fw, clearH-2*fw, ft), mMetal);
+  top.position.set(0, hh-fw/2, 0); bot.position.set(0,-hh+fw/2, 0);
+  left.position.set(-hw+fw/2, 0, 0); right.position.set(hw-fw/2, 0, 0);
+  flange.add(top,bot,left,right); g.add(flange);
+
+  const bw=P.BOX_WALL, bd=P.BOX_DEPTH;
+  const topB  = new THREE.Mesh(new THREE.BoxGeometry(clearW, bw, bd), mMetal);
+  const botB  = new THREE.Mesh(new THREE.BoxGeometry(clearW, bw, bd), mMetal);
+  const leftB = new THREE.Mesh(new THREE.BoxGeometry(bw, clearH, bd), mMetal);
+  const rightB= new THREE.Mesh(new THREE.BoxGeometry(bw, clearH, bd), mMetal);
+  topB.position.set(0,  hh-bw/2, -bd/2); botB.position.set(0, -hh+bw/2, -bd/2);
+  leftB.position.set(-hw+bw/2, 0, -bd/2); rightB.position.set( hw-bw/2, 0, -bd/2);
+  g.add(topB,botB,leftB,rightB);
+
+  const vL=new THREE.Mesh(new THREE.BoxGeometry(P.VPOST_W, clearH-2*fw, P.VPOST_T), mMetal);
+  const vR=vL.clone();
+  vL.position.set(-hw+fw+P.VPOST_W/2, 0, -bd/2);
+  vR.position.set( hw-fw-P.VPOST_W/2, 0, -bd/2);
+  const hTop = new THREE.Mesh(new THREE.BoxGeometry(clearW-2*(fw+P.VPOST_W), P.HRAIL_H, P.HRAIL_T), mMetal);
+  const hBot = hTop.clone();
+  hTop.position.set(0,  hh-fw-P.HRAIL_H/2, -bd/2);
+  hBot.position.set(0, -hh+fw+P.HRAIL_H/2, -bd/2);
+  g.add(vL,vR,hTop,hBot);
+
+  const bladeLen = clearW - 2*(fw+P.VPOST_W) - 0.02;
+  for(let y=-hh+fw+0.02; y<=hh-fw-0.02; y+=P.SLAT_PITCH){
+    const sl = new THREE.Mesh(new THREE.BoxGeometry(bladeLen, P.SLAT_T, bd-0.02), mMetal);
+    sl.position.set(0, y, -bd/2); sl.rotateX(-P.SLAT_ANG); g.add(sl);
+  }
+  const drip = new THREE.Mesh(new THREE.BoxGeometry(P.DRIP_W, P.DRIP_T, ft), mMetal);
+  drip.position.set(0, -hh-fw/2 - P.DRIP_T/2, 0); g.add(drip);
+
+  return g;
+}
+
+/* ---------- build ---------- */
+function build(){
+  const root = new THREE.Group();
+  const y0=P.H_PLINTH, y1=P.H_PLINTH+P.H_BODY;
+
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(P.W, P.H_PLINTH, P.D), mConcrete);
+  plinth.position.y = P.H_PLINTH/2; plinth.castShadow=plinth.receiveShadow=true; root.add(plinth);
+
+  const front = new THREE.Mesh(makePanelWithHole(P.W, P.H_BODY, P.AP_W, P.AP_H, P.WALL_T), mConcrete);
+  front.position.set(0, y0, -P.D/2);
+  const back  = new THREE.Mesh(makePanelWithHole(P.W, P.H_BODY, P.AP_W, P.AP_H, P.WALL_T), mConcrete);
+  back.rotation.y=Math.PI; back.position.set(0, y0,  P.D/2);
+  const left  = new THREE.Mesh(makePanelWithHole(P.D, P.H_BODY, P.AP_W, P.AP_H, P.WALL_T), mConcrete);
+  left.rotation.y= Math.PI/2;  left.position.set(-P.W/2, y0, 0);
+  const right = new THREE.Mesh(makePanelWithHole(P.D, P.H_BODY, P.AP_W, P.AP_H, P.WALL_T), mConcrete);
+  right.rotation.y= -Math.PI/2; right.position.set( P.W/2, y0, 0);
+  [front,back,left,right].forEach(m=>{ m.castShadow=m.receiveShadow=true; root.add(m); });
+
+  const yCtr = P.H_PLINTH + P.H_BODY/2;
+
+  function mountGrille(pos, rotY){
+    const gr = buildGrille(P.AP_W + 2*P.BORDER, P.AP_H + 2*P.BORDER);
+    gr.rotation.y = rotY || 0; gr.position.copy(pos);
+
+    // bolt positions — только по наружной зоне фланца (чтобы за ним была стена)
+    const fw=P.FLANGE_W, hw=(P.AP_W+2*P.BORDER)/2, hh=(P.AP_H+2*P.BORDER)/2;
+    const margin = 0.02;                   // отступ от внешнего края фланца
+    const xL = -hw + margin;
+    const xR =  hw - margin;
+    const yB = -hh + margin;
+    const yT =  hh - margin;
+    const x1 = -hw + fw*0.55, x2 = 0, x3 = hw - fw*0.55;
+    const y1 = -hh + fw*0.55, y2 = 0, y3 = hh - fw*0.55;
+
+    const pts=[
+      [x1,yT],[x2,yT],[x3,yT],     // верхний фланец
+      [x1,yB],[x2,yB],[x3,yB],     // нижний фланец
+      [xL,y1],[xL,y2],[xL,y3],     // левый фланец
+      [xR,y1],[xR,y2],[xR,y3]      // правый фланец
+    ];
+
+    const bolts = new THREE.Group();
+    pts.forEach(([x,y])=>{ const b=buildBolt(); b.position.set(x,y,0); bolts.add(b); });
+    gr.add(bolts);
+
+    root.add(gr);
+  }
+  mountGrille(new THREE.Vector3(0, yCtr, -P.D/2 - P.FLANGE_T/2), 0);
+  mountGrille(new THREE.Vector3(0, yCtr,  P.D/2 + P.FLANGE_T/2), Math.PI);
+  mountGrille(new THREE.Vector3(-P.W/2 - P.FLANGE_T/2, yCtr, 0),  Math.PI/2);
+  mountGrille(new THREE.Vector3( P.W/2 + P.FLANGE_T/2, yCtr, 0), -Math.PI/2);
+
+  const roof = makeSolidHipRoof(P.W, P.D, y1, P.ROOF_H, mConcrete); roof.castShadow=true; root.add(roof);
+
+  return root;
+}
+
+let shaft = build(); scene.add(shaft);
+
+/* ---------- UI ---------- */
+function rebuild(){ scene.remove(shaft); shaft = build(); scene.add(shaft); }
+document.getElementById('resetBtn').addEventListener('click', ()=>{ controls.reset(); camera.position.set(4.4,2.6,6.2); controls.target.set(0,1.0,0); });
+
+document.getElementById('exportBtn').addEventListener('click', ()=>{
+  const exporter = new GLTFExporter();
+  exporter.parse(shaft, (gltf)=>{
+    const data = JSON.stringify(gltf, null, 2);
+    const blob = new Blob([data], {type:'model/gltf+json'});
+    const url = URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='vent_shaft_ext4.gltf'; a.click();
+    URL.revokeObjectURL(url);
+  }, {binary:false, embedImages:true});
+});
+
+const angleEl = document.getElementById('angle');
+const pitchEl = document.getElementById('pitch');
+const wallEl  = document.getElementById('wall');
+const apwEl   = document.getElementById('apw');
+const aphEl   = document.getElementById('aph');
+angleEl.addEventListener('input', e=>{ P.SLAT_ANG = Number(e.target.value)*Math.PI/180; rebuild(); });
+pitchEl.addEventListener('input', e=>{ P.SLAT_PITCH = Math.max(0.04, Number(e.target.value)/1000); rebuild(); });
+wallEl .addEventListener('input', e=>{ P.WALL_T = Math.max(0.08, Math.min(0.22, Number(e.target.value)/1000)); rebuild(); });
+apwEl  .addEventListener('input', e=>{ P.AP_W   = Number(e.target.value)/1000; rebuild(); });
+aphEl  .addEventListener('input', e=>{ P.AP_H   = Number(e.target.value)/1000; rebuild(); });
+
+/* ---------- render ---------- */
+function onResize(){ camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); }
+window.addEventListener('resize', onResize);
+function animate(){ requestAnimationFrame(animate); controls.update(); renderer.render(scene,camera); }
+animate();
+</script>
+</body>
+</html>
