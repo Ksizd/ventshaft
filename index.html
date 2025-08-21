@@ -43,6 +43,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
 
 /* ---------- tiny procedural textures ---------- */
 function perlinLike(size=512, scale=18, octaves=4){
@@ -57,59 +58,111 @@ function perlinLike(size=512, scale=18, octaves=4){
     data[y*w+x]=total/norm;
   } return data;
 }
-function makeConcreteURL(size=1024){
-  const c=document.createElement('canvas'); c.width=c.height=size; const ctx=c.getContext('2d',{willReadFrequently:true});
-  const n=perlinLike(size,18,5), img=ctx.createImageData(size,size);
-  for(let i=0;i<img.data.length;i+=4){
-    const v=n[i/4], base=0.72, tint=[178,184,188]; const k=Math.max(0,Math.min(255,Math.round((base+(v-0.5)*0.16)*255)));
-    img.data[i]=Math.round(tint[0]*k/255); img.data[i+1]=Math.round(tint[1]*k/255); img.data[i+2]=Math.round(tint[2]*k/255); img.data[i+3]=255;
+function normalFromHeight(n,size,strength=2){
+  const c=document.createElement('canvas'); c.width=c.height=size; const ctx=c.getContext('2d');
+  const img=ctx.createImageData(size,size), w=size;
+  for(let y=0;y<size;y++){
+    for(let x=0;x<size;x++){
+      const i=y*w+x;
+      const nx1=n[y*w+Math.max(0,x-1)], nx2=n[y*w+Math.min(w-1,x+1)];
+      const ny1=n[Math.max(0,y-1)*w+x], ny2=n[Math.min(size-1,y+1)*w+x];
+      const dx=(nx2-nx1)*strength, dy=(ny2-ny1)*strength, dz=1;
+      const len=Math.sqrt(dx*dx+dy*dy+dz*dz);
+      const r=Math.round((dx/len*0.5+0.5)*255);
+      const g=Math.round((dy/len*0.5+0.5)*255);
+      const b=Math.round((dz/len*0.5+0.5)*255);
+      img.data[i*4]=r; img.data[i*4+1]=g; img.data[i*4+2]=b; img.data[i*4+3]=255;
+    }
   }
-  ctx.putImageData(img,0,0); ctx.globalAlpha=0.11;
-  for(let i=0;i<22;i++){ ctx.fillStyle='#6b737a'; const x=Math.random()*size, w=2+Math.random()*4, h=size*(0.35+Math.random()*0.45); ctx.fillRect(x,0,w,h); }
-  ctx.globalAlpha=1; return c.toDataURL('image/png');
+  ctx.putImageData(img,0,0); return c;
 }
-function makeMetalURL(size=1024){
-  const c=document.createElement('canvas'); c.width=c.height=size; const ctx=c.getContext('2d',{willReadFrequently:true});
-  const n=perlinLike(size,22,4), img=ctx.createImageData(size,size);
+function makeConcreteTextures(size=1024){
+  const n=perlinLike(size,18,5);
+  const colC=document.createElement('canvas'); colC.width=colC.height=size; const colCtx=colC.getContext('2d');
+  const roughC=document.createElement('canvas'); roughC.width=roughC.height=size; const roughCtx=roughC.getContext('2d');
+  const img=colCtx.createImageData(size,size); const rImg=roughCtx.createImageData(size,size);
   for(let i=0;i<img.data.length;i+=4){
-    const v=n[i/4], base=0.83; const k=Math.max(0,Math.min(255,Math.round((base+(v-0.5)*0.06)*255)));
-    img.data[i]=img.data[i+1]=img.data[i+2]=k; img.data[i+3]=255;
-  } ctx.putImageData(img,0,0); return c.toDataURL('image/png');
+    const v=n[i/4];
+    const base=0.72, tint=[178,184,188]; const k=Math.max(0,Math.min(255,Math.round((base+(v-0.5)*0.16)*255)));
+    img.data[i]=Math.round(tint[0]*k/255); img.data[i+1]=Math.round(tint[1]*k/255); img.data[i+2]=Math.round(tint[2]*k/255); img.data[i+3]=255;
+    const rk=Math.max(0,Math.min(255,Math.round((0.8+(v-0.5)*0.15)*255)));
+    rImg.data[i]=rImg.data[i+1]=rImg.data[i+2]=rk; rImg.data[i+3]=255;
+  }
+  colCtx.putImageData(img,0,0); colCtx.globalAlpha=0.11;
+  for(let i=0;i<22;i++){ colCtx.fillStyle='#6b737a'; const x=Math.random()*size, w=2+Math.random()*4, h=size*(0.35+Math.random()*0.45); colCtx.fillRect(x,0,w,h); }
+  colCtx.globalAlpha=1; roughCtx.putImageData(rImg,0,0);
+  const normC=normalFromHeight(n,size,4);
+  return {
+    color:new THREE.CanvasTexture(colC),
+    normal:new THREE.CanvasTexture(normC),
+    rough:new THREE.CanvasTexture(roughC)
+  };
 }
-const concURL = makeConcreteURL(1024);
-const metalURL= makeMetalURL(1024);
+function makeMetalTextures(size=1024){
+  const n=perlinLike(size,22,4);
+  const colC=document.createElement('canvas'); colC.width=colC.height=size; const colCtx=colC.getContext('2d');
+  const roughC=document.createElement('canvas'); roughC.width=roughC.height=size; const roughCtx=roughC.getContext('2d');
+  const img=colCtx.createImageData(size,size); const rImg=roughCtx.createImageData(size,size);
+  for(let i=0;i<img.data.length;i+=4){
+    const v=n[i/4];
+    const base=0.83; const k=Math.max(0,Math.min(255,Math.round((base+(v-0.5)*0.06)*255)));
+    img.data[i]=img.data[i+1]=img.data[i+2]=k; img.data[i+3]=255;
+    const rk=Math.max(0,Math.min(255,Math.round((0.45+(v-0.5)*0.05)*255)));
+    rImg.data[i]=rImg.data[i+1]=rImg.data[i+2]=rk; rImg.data[i+3]=255;
+  }
+  colCtx.putImageData(img,0,0); roughCtx.putImageData(rImg,0,0);
+  const normC=normalFromHeight(n,size,3);
+  return {
+    color:new THREE.CanvasTexture(colC),
+    normal:new THREE.CanvasTexture(normC),
+    rough:new THREE.CanvasTexture(roughC)
+  };
+}
+const concTex = makeConcreteTextures(1024);
+const metalTex= makeMetalTextures(1024);
 
 /* ---------- scene ---------- */
 const renderer = new THREE.WebGLRenderer({ antialias:true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.physicallyCorrectLights = true;
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xd7e1e9);
 
 const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 0.1, 400);
 camera.position.set(4.4, 2.6, 6.2); scene.add(camera);
 const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.target.set(0,1.0,0);
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x586070, 0.75));
-const dir = new THREE.DirectionalLight(0xffffff, 1.15); dir.position.set(6,9,5); dir.castShadow=true; dir.shadow.mapSize.set(2048,2048); scene.add(dir);
+const dir = new THREE.DirectionalLight(0xffffff, 1.0); dir.position.set(6,9,5); dir.castShadow=true; dir.shadow.mapSize.set(2048,2048); scene.add(dir);
 const grid = new THREE.GridHelper(60, 60, 0x666666, 0xbbbbbb); grid.position.y=0.001; scene.add(grid);
 const axes = new THREE.AxesHelper(1.5); axes.visible=false; scene.add(axes);
 document.addEventListener('keydown', e=>{ if(['x','X','х','Х'].includes(e.key)) axes.visible=!axes.visible; });
 
 /* ---------- materials ---------- */
-const loader = new THREE.TextureLoader();
-function load(url, sRGB=true, repX=1.0, repY=1.0){
-  const t=loader.load(url); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(repX,repY); t.anisotropy=8; t.colorSpace=sRGB?THREE.SRGBColorSpace:THREE.NoColorSpace; return t;
+function setupTex(t, repX=1.0, repY=1.0, sRGB=true){
+  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(repX,repY); t.anisotropy=8; t.colorSpace=sRGB?THREE.SRGBColorSpace:THREE.NoColorSpace; return t;
 }
-const concBase = load(concURL, true, 1.6, 1.0);
-const metalBase= load(metalURL, true, 1.0, 1.0);
-const mConcrete = new THREE.MeshStandardMaterial({ map: concBase, roughness:0.86, metalness:0.0, side:THREE.DoubleSide });
-const mMetal    = new THREE.MeshStandardMaterial({ map: metalBase, roughness:0.40, metalness:0.0, side:THREE.DoubleSide });
-const mBolt     = new THREE.MeshStandardMaterial({ color:0x9aa3ac, roughness:0.35, metalness:0.9 });
+setupTex(concTex.color,1.6,1.0,true); setupTex(concTex.normal,1.6,1.0,false); setupTex(concTex.rough,1.6,1.0,false);
+setupTex(metalTex.color,1.0,1.0,true); setupTex(metalTex.normal,1.0,1.0,false); setupTex(metalTex.rough,1.0,1.0,false);
+const mConcrete = new THREE.MeshStandardMaterial({ map: concTex.color, normalMap: concTex.normal, roughnessMap: concTex.rough, metalness:0.0, side:THREE.DoubleSide });
+const mMetal    = new THREE.MeshStandardMaterial({ map: metalTex.color, normalMap: metalTex.normal, roughnessMap: metalTex.rough, metalness:0.2, roughness:0.4, side:THREE.DoubleSide });
+const mBolt     = new THREE.MeshStandardMaterial({ color:0x9aa3ac, roughness:0.35, metalness:0.9, envMapIntensity:1.0 });
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+pmrem.compileEquirectangularShader();
+new RGBELoader().setPath('https://threejs.org/examples/textures/equirectangular/').load('royal_esplanade_1k.hdr', (hdr)=>{
+  const envMap = pmrem.fromEquirectangular(hdr).texture;
+  scene.environment = envMap;
+  scene.background = envMap;
+  hdr.dispose(); pmrem.dispose();
+});
 
 /* ---------- params (metres) ---------- */
 const P = {
